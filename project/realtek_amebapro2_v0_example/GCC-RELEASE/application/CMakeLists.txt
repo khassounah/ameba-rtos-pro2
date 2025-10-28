@@ -12,7 +12,7 @@ message(STATUS "Build libraries ${BUILD_LIB}")
 message(STATUS "Build FPGA ${BUILD_FPGA}")
 message(STATUS "Build PXP ${BUILD_PXP}")
 
-include(../config.cmake)
+include("../${cmake_config}")
 
 include(../sensor_iq.cmake)
 

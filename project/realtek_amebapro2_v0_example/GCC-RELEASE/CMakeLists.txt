@@ -7,7 +7,16 @@ set (prj_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 # root of SDK
 set (sdk_root "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
 
-include(./config.cmake)
+if (DEFINED APPLICATION)
+	# root of application
+	set (app_root "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
+	set(cmake_config "./config.cmake")
+#	set(cmake_config "${app_root}/config.cmake")
+else()
+	set(cmake_config "./config.cmake")
+endif()
+
+include("${cmake_config}")
 
 ##############################################################
 # COPY FILE 

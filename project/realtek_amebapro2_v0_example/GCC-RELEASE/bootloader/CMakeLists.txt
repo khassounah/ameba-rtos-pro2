@@ -10,7 +10,7 @@ set(bootloader bootloader)
 
 #set(freertos freertos_v202012.00)
 
-include(../config.cmake)
+include("../${cmake_config}")
 
 include(libboot.cmake OPTIONAL)
 
