@@ -33,7 +33,11 @@
 * Flash file system configurations
 */
 #define NAND_APP_BASE           0x4000000 //NAND FLASH FILESYSTEM begin address It need to alignment block size, the default is 512 BLOCK. = 512(block index) * 64(page number per block) * 2048(page size)
-#define FLASH_APP_BASE          USER_DATA_END  //Nor flash file system base address
+
+#define FLASH_APP_VAR_BASE      USER_DATA_END  // Start address (0xF64000)
+#define FLASH_APP_VAR_LEN       0x04000        // 4KB allocated space
+
+#define FLASH_APP_BASE          (FLASH_APP_VAR_BASE + FLASH_APP_VAR_LEN)  //Nor flash file system base address
 #define FLASH_FILESYS_SIZE      (NOR_FLASH_END - FLASH_APP_BASE)  //flash file system size(Nor and Nand)
 
 /**
