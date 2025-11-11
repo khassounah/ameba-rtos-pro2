@@ -22,6 +22,7 @@
 #if SUPPORT_LOG_SERVICE
 //======================================================
 struct list_head log_hash[ATC_INDEX_NUM];
+struct list_head help_callbacks_list;
 
 extern void at_wifi_init(void);
 extern void at_fs_init(void);
@@ -183,6 +184,9 @@ void log_service_init(void)
 		INIT_LIST_HEAD(&log_hash[i]);
 	}
 
+	// Initialize help callbacks list
+	INIT_LIST_HEAD(&help_callbacks_list);
+
 	for (i = 0; i < (unsigned int)(__log_init_end__ - __log_init_begin__); i++) {
 		log_init_table[i]();
 	}
@@ -203,6 +207,25 @@ void log_service_add_table(log_item_t *tbl, int len)
 	for (i = 0; i < len; i++) {
 		log_add_new_command(&tbl[i]);
 	}
+}
+
+// Register a help callback function
+void log_service_register_help(help_callback_t callback)
+{
+	help_callback_item_t *item;
+
+	if (callback == NULL) {
+		return;
+	}
+
+	// Allocate memory for the callback item
+	item = (help_callback_item_t *)rtw_malloc(sizeof(help_callback_item_t));
+	if (item == NULL) {
+		return;
+	}
+
+	item->callback = callback;
+	list_add(&item->node, &help_callbacks_list);
 }
 
 void *log_action(char *cmd)
@@ -373,11 +396,21 @@ int mp_commnad_handler(char *cmd)
 #endif
 void print_help_msg(void)
 {
-#if CONFIG_WLAN
+	struct list_head *iterator;
+	help_callback_item_t *item;
+
+	#if CONFIG_WLAN
 	extern void print_wlan_help(void);
 	print_wlan_help();
 #endif
-//add other help message print here
+
+// Call all registered help callbacks
+	list_for_each(iterator, &help_callbacks_list) {
+		item = list_entry(iterator, help_callback_item_t, node);
+		if (item->callback != NULL) {
+			item->callback();
+		}
+	}
 }
 
 int print_help_handler(char *cmd)

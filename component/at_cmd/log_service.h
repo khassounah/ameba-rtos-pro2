@@ -95,14 +95,22 @@ extern unsigned int   gDbgFlag;
 
 typedef void (*log_init_t)(void);
 typedef void (*log_act_t)(void *);
+typedef void (*help_callback_t)(void);
+
 typedef struct _at_command_item_ {
 	const char *log_cmd;
 	log_act_t at_act;
 	struct list_head node;
 } log_item_t;
 
+typedef struct _help_callback_item_ {
+	help_callback_t callback;
+	struct list_head node;
+} help_callback_item_t;
+
 void log_service_add_table(log_item_t *tbl, int len);
 int parse_param(char *buf, char **argv);
+void log_service_register_help(help_callback_t callback);
 #if CONFIG_LOG_SERVICE_LOCK
 void log_service_lock_init(void);
 void log_service_lock(void);
