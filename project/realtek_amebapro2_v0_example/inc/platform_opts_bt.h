@@ -1,7 +1,7 @@
 #ifndef __PLATFORM_OPTS_BT_H__
 #define __PLATFORM_OPTS_BT_H__
 
-#define CONFIG_BT			0
+#define CONFIG_BT			1
 
 #define VERSION_2019		1
 #define VERSION_2021		2
@@ -11,7 +11,7 @@
 #define CONFIG_FTL_ENABLED
 #define CONFIG_BT_CONFIG			0
 #define CONFIG_BT_AIRSYNC_CONFIG	0
-#define CONFIG_BT_PERIPHERAL		0
+#define CONFIG_BT_PERIPHERAL		1
 #define CONFIG_BT_CENTRAL			0
 #define CONFIG_BT_SCATTERNET		0
 #define CONFIG_BT_BEACON			0

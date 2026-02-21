@@ -231,7 +231,7 @@ void video_frame_complete_cb(void *param1, void  *param2, uint32_t arg)
 		switch (enc2out->cmd_status) {
 		case VOE_ENC_BUF_OVERFLOW:
 		case VOE_ENC_QUEUE_OVERFLOW:
-			VIDEO_DBG_WARNING("VOE CH%d ENC %s full (queue/used/out/rsvd) %d/%dKB%dKB%dKB\n"
+			VIDEO_DBG_WARNING("VOE CH%d ENC %s full (queue/used/out/rsvd) %d/%dKB/%dKB/%dKB\n"
 							  , enc2out->ch
 							  , enc2out->cmd_status == VOE_ENC_BUF_OVERFLOW ? "buff" : "queue"
 							  , enc2out->enc_time
@@ -243,7 +243,7 @@ void video_frame_complete_cb(void *param1, void  *param2, uint32_t arg)
 			break;
 		case VOE_JPG_BUF_OVERFLOW:
 		case VOE_JPG_QUEUE_OVERFLOW:
-			VIDEO_DBG_WARNING("VOE CH%d JPG %s full (queue/used/out/rsvd) %d/%dKB\n"
+			VIDEO_DBG_WARNING("VOE CH%d JPG %s full (queue/used) %d/%dKB\n"
 							  , enc2out->ch
 							  , enc2out->cmd_status == VOE_JPG_BUF_OVERFLOW ? "buff" : "queue"
 							  , enc2out->jpg_time

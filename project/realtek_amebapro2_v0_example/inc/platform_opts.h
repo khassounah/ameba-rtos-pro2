@@ -136,7 +136,7 @@
 /*For fast dhcp*/
 #define CONFIG_FAST_DHCP    1
 /*For fast connect*/
-#define ENABLE_FAST_CONNECT 1
+#define ENABLE_FAST_CONNECT 0
 
 #if defined(ENABLE_FAST_CONNECT) && ENABLE_FAST_CONNECT
 #define ENABLE_FAST_CONNECT_NAND 1
