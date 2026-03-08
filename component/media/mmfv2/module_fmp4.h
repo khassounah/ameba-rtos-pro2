@@ -19,6 +19,12 @@
 #define CMD_FMP4_FILE_OPEN      MM_MODULE_CMD(0x03)
 #define CMD_FMP4_FILE_CLOSE     MM_MODULE_CMD(0x04)
 #define CMD_FMP4_APPLY          MM_MODULE_CMD(0x05)
+// If enabled (arg=1), allow writing a video-only MP4 (no audio track required).
+// If disabled (arg=0), keep legacy behavior: wait until both audio+video tracks exist.
+#define CMD_FMP4_SET_VIDEO_ONLY         MM_MODULE_CMD(0x06)
+// If arg is >0, enable timelapse timestamp mode and set "record fps" (synthetic PTS/DTS cadence).
+// If arg is 0, disable timelapse timestamp mode and pass through input timestamps.
+#define CMD_FMP4_SET_TIMELAPSE_FPS      MM_MODULE_CMD(0x07)
 
 
 struct mov_h264_test_t {
@@ -48,13 +54,22 @@ typedef struct fmp4_ctx_s {
 	struct mov_aac_test_t mov_aac_ctx;
 
 	FILE *wfp;
-	char fmp4_ram_filename[32];
+	char fmp4_ram_filename[256];
 
 	int s_buffer_len, s_extra_data_len;
 	uint8_t *s_buffer, *s_extra_data;
 
 	bool add_audio_track_done;
 	bool add_video_track_done;
+
+	// Legacy behavior required both tracks; video-only mode relaxes this.
+	bool require_audio_track;
+
+	// Timelapse mode: synthesize timestamps at a fixed fps for accelerated playback.
+	bool timelapse_ts_enable;
+	uint32_t timelapse_record_fps; // frames per second for synthetic timestamps
+	uint32_t tl_pts_ms;            // current synthetic PTS/DTS in ms
+	uint32_t tl_remainder;         // Bresenham-style remainder accumulator (for 1000/fps rounding)
 } fmp4_ctx_t;
 
 extern mm_module_t fmp4_module;

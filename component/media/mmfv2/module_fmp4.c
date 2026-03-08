@@ -27,6 +27,23 @@
 static void h264_fmp4_write(void *param, const void *data, int bytes);
 static void aac_fmp4_write(void *param, const uint8_t *ptr, int bytes);
 
+static uint32_t fmp4_timelapse_next_pts_ms(fmp4_ctx_t *ctx, uint32_t passthrough_pts_ms)
+{
+	if (!ctx || !ctx->timelapse_ts_enable || ctx->timelapse_record_fps == 0) {
+		return passthrough_pts_ms;
+	}
+
+	uint32_t pts = ctx->tl_pts_ms;
+
+	// Keep average cadence at (1000 / fps) ms while spreading rounding error.
+	// tl_remainder accumulates "1000" in units of 1ms*fps.
+	ctx->tl_remainder += 1000;
+	ctx->tl_pts_ms += (ctx->tl_remainder / ctx->timelapse_record_fps);
+	ctx->tl_remainder = (ctx->tl_remainder % ctx->timelapse_record_fps);
+
+	return pts;
+}
+
 int fmp4_handle(void *p, void *input, void *output)
 {
 	int ret = 0;
@@ -35,8 +52,10 @@ int fmp4_handle(void *p, void *input, void *output)
 
 	if (input_item->type == AV_CODEC_ID_H264) {
 		ctx->mov_h264_ctx.ptr = (uint8_t *)input_item->data_addr;
-		ctx->mov_h264_ctx.pts = (uint32_t)input_item->timestamp;
-		ctx->mov_h264_ctx.dts = (uint32_t)input_item->timestamp;
+		uint32_t in_ts = (uint32_t)input_item->timestamp;
+		uint32_t pts = fmp4_timelapse_next_pts_ms(ctx, in_ts);
+		ctx->mov_h264_ctx.pts = pts;
+		ctx->mov_h264_ctx.dts = pts;
 		//printf("\r\nVideo timestamp = %d", ctx->mov_h264_ctx.pts);
 		h264_fmp4_write(ctx, (uint8_t *)input_item->data_addr, input_item->size);
 	} else if (input_item->type == AV_CODEC_ID_MP4A_LATM) {
@@ -80,7 +99,7 @@ static void h264_fmp4_write(void *param, const void *data, int bytes)
 		ctx->add_video_track_done = 1;
 	}
 
-	if (ctx->add_video_track_done && ctx->add_audio_track_done) {
+	if (ctx->add_video_track_done && (ctx->add_audio_track_done || !ctx->require_audio_track)) {
 		fmp4_writer_write(ctx->fmp4, ctx->mov_h264_ctx.track, ctx->s_buffer, n, ctx->mov_h264_ctx.pts, ctx->mov_h264_ctx.dts, 1 == vcl ? MOV_AV_FLAG_KEYFREAME : 0);
 	}
 
@@ -173,7 +192,9 @@ int fmp4_control(void *p, int cmd, int arg)
 		break;
 	case CMD_FMP4_SET_FILENAME:
 		memset(ctx->fmp4_ram_filename, 0x00, sizeof(ctx->fmp4_ram_filename));
-		memcpy((char *)ctx->fmp4_ram_filename, (char *)arg, strlen((char *)arg));
+		if ((char *)arg) {
+			strncpy((char *)ctx->fmp4_ram_filename, (char *)arg, sizeof(ctx->fmp4_ram_filename) - 1);
+		}
 		break;
 	case CMD_FMP4_FILE_OPEN:
 		ctx->wfp = fopen(ctx->fmp4_ram_filename, "wb+");
@@ -188,6 +209,8 @@ int fmp4_control(void *p, int cmd, int arg)
 
 		ctx->add_audio_track_done = 0;
 		ctx->add_video_track_done = 0;
+		ctx->tl_pts_ms = 0;
+		ctx->tl_remainder = 0;
 		break;
 	case CMD_FMP4_FILE_CLOSE:
 		if (ctx->fmp4) {
@@ -203,6 +226,22 @@ int fmp4_control(void *p, int cmd, int arg)
 		break;
 	case CMD_FMP4_APPLY:
 
+		break;
+	case CMD_FMP4_SET_VIDEO_ONLY:
+		ctx->require_audio_track = (arg ? 0 : 1);
+		break;
+	case CMD_FMP4_SET_TIMELAPSE_FPS:
+		if (arg <= 0) {
+			ctx->timelapse_ts_enable = 0;
+			ctx->timelapse_record_fps = 0;
+			ctx->tl_pts_ms = 0;
+			ctx->tl_remainder = 0;
+		} else {
+			ctx->timelapse_ts_enable = 1;
+			ctx->timelapse_record_fps = (uint32_t)arg;
+			ctx->tl_pts_ms = 0;
+			ctx->tl_remainder = 0;
+		}
 		break;
 	default:
 		break;
@@ -244,6 +283,11 @@ void *fmp4_create(void *parent)
 	}
 	memset(ctx, 0, sizeof(fmp4_ctx_t));
 	ctx->parent = parent;
+	ctx->require_audio_track = 1;
+	ctx->timelapse_ts_enable = 0;
+	ctx->timelapse_record_fps = 0;
+	ctx->tl_pts_ms = 0;
+	ctx->tl_remainder = 0;
 
 	ctx->s_buffer_len = BUFFER_SIZE_BY_BITRATE(4);
 	ctx->s_buffer = (uint8_t *)malloc(sizeof(uint8_t) * BUFFER_SIZE_BY_BITRATE(4));
