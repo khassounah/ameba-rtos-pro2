@@ -21,11 +21,78 @@
 #include "mmf2_module.h"
 #include "module_fmp4.h"
 #include "mov-buffer.h"
+#include "mov-format.h"
 //------------------------------------------------------------------------------
 #define BUFFER_SIZE_BY_BITRATE(n)	(n)*1024*1024/8
 
 static void h264_fmp4_write(void *param, const void *data, int bytes);
 static void aac_fmp4_write(void *param, const uint8_t *ptr, int bytes);
+
+static void fmp4_maybe_save_segment(fmp4_ctx_t *ctx, uint32_t pts_ms)
+{
+	if (!ctx || !ctx->fmp4 || !ctx->wfp || ctx->segment_ms == 0) {
+		return;
+	}
+
+	// If we're in A/V mode, avoid segmenting until audio track exists,
+	// otherwise early segments may be video-only unexpectedly.
+	if (ctx->require_audio_track && !ctx->add_audio_track_done) {
+		return;
+	}
+
+	if (!ctx->have_segment_pts) {
+		ctx->last_segment_pts_ms = pts_ms;
+		ctx->have_segment_pts = 1;
+		return;
+	}
+
+	uint32_t dt = pts_ms - ctx->last_segment_pts_ms; // uint32 wrap-safe
+	if (dt < ctx->segment_ms) {
+		return;
+	}
+
+	(void)fmp4_writer_save_segment(ctx->fmp4);
+	(void)fflush(ctx->wfp);
+	ctx->last_segment_pts_ms = pts_ms;
+}
+
+static void fmp4_maybe_write_init_segment(fmp4_ctx_t *ctx)
+{
+	if (!ctx || !ctx->fmp4 || !ctx->wfp || ctx->segment_ms == 0 || ctx->init_segment_written) {
+		return;
+	}
+
+	// Only write init segment once we know the track list.
+	// - Video-only: after video track exists.
+	// - A/V: after both audio and video tracks exist.
+	if (!ctx->add_video_track_done) {
+		return;
+	}
+	if (ctx->require_audio_track && !ctx->add_audio_track_done) {
+		return;
+	}
+
+	(void)fmp4_writer_init_segment(ctx->fmp4);
+	(void)fflush(ctx->wfp);
+	ctx->init_segment_written = 1;
+}
+
+static uint32_t fmp4_normalize_pts_ms(fmp4_ctx_t *ctx, uint32_t raw_pts_ms)
+{
+	// Timelapse mode already synthesizes timestamps starting at 0.
+	if (!ctx || ctx->timelapse_ts_enable) {
+		return raw_pts_ms;
+	}
+
+	if (!ctx->base_ts_valid) {
+		ctx->base_ts_ms = raw_pts_ms;
+		ctx->base_ts_valid = 1;
+		return 0;
+	}
+
+	// Unsigned subtraction keeps behavior wrap-safe for uint32 tick counters.
+	return (uint32_t)(raw_pts_ms - ctx->base_ts_ms);
+}
 
 static uint32_t fmp4_timelapse_next_pts_ms(fmp4_ctx_t *ctx, uint32_t passthrough_pts_ms)
 {
@@ -54,12 +121,15 @@ int fmp4_handle(void *p, void *input, void *output)
 		ctx->mov_h264_ctx.ptr = (uint8_t *)input_item->data_addr;
 		uint32_t in_ts = (uint32_t)input_item->timestamp;
 		uint32_t pts = fmp4_timelapse_next_pts_ms(ctx, in_ts);
+		pts = fmp4_normalize_pts_ms(ctx, pts);
 		ctx->mov_h264_ctx.pts = pts;
 		ctx->mov_h264_ctx.dts = pts;
 		//printf("\r\nVideo timestamp = %d", ctx->mov_h264_ctx.pts);
 		h264_fmp4_write(ctx, (uint8_t *)input_item->data_addr, input_item->size);
 	} else if (input_item->type == AV_CODEC_ID_MP4A_LATM) {
-		ctx->mov_aac_ctx.pts = (uint32_t)input_item->timestamp;
+		uint32_t pts = (uint32_t)input_item->timestamp;
+		pts = fmp4_normalize_pts_ms(ctx, pts);
+		ctx->mov_aac_ctx.pts = pts;
 		//printf("\r\nAudio timestamp = %d", ctx->mov_aac_ctx.pts);
 		aac_fmp4_write(ctx, (uint8_t *)input_item->data_addr, input_item->size);
 	}
@@ -100,7 +170,9 @@ static void h264_fmp4_write(void *param, const void *data, int bytes)
 	}
 
 	if (ctx->add_video_track_done && (ctx->add_audio_track_done || !ctx->require_audio_track)) {
+		fmp4_maybe_write_init_segment(ctx);
 		fmp4_writer_write(ctx->fmp4, ctx->mov_h264_ctx.track, ctx->s_buffer, n, ctx->mov_h264_ctx.pts, ctx->mov_h264_ctx.dts, 1 == vcl ? MOV_AV_FLAG_KEYFREAME : 0);
+		fmp4_maybe_save_segment(ctx, (uint32_t)ctx->mov_h264_ctx.pts);
 	}
 
 }
@@ -138,7 +210,9 @@ static void aac_fmp4_write(void *param, const uint8_t *ptr, int bytes)
 
 		int framelen = ((ptr[3] & 0x03) << 11) | (ptr[4] << 3) | (ptr[5] >> 5);
 		if (ctx->add_video_track_done && ctx->add_audio_track_done) {
+			fmp4_maybe_write_init_segment(ctx);
 			fmp4_writer_write(ctx->fmp4, ctx->mov_aac_ctx.track, ptr + 7, framelen - 7, ctx->mov_aac_ctx.pts, ctx->mov_aac_ctx.pts, 0);
+			fmp4_maybe_save_segment(ctx, (uint32_t)ctx->mov_aac_ctx.pts);
 		}
 		ptr += framelen;
 	}
@@ -202,7 +276,7 @@ int fmp4_control(void *p, int cmd, int arg)
 			printf("Fail to open file\r\n");
 			return -1;
 		}
-		ctx->fmp4 = fmp4_writer_create(mov_file_buffer(), ctx->wfp, MOV_FLAG_FASTSTART);
+		ctx->fmp4 = fmp4_writer_create(mov_file_buffer(), ctx->wfp, MOV_FLAG_FASTSTART | (ctx->segment_ms > 0 ? MOV_FLAG_SEGMENT : 0));
 
 		ctx->mov_h264_ctx.track = -1;
 		ctx->mov_aac_ctx.track = -1;
@@ -211,8 +285,20 @@ int fmp4_control(void *p, int cmd, int arg)
 		ctx->add_video_track_done = 0;
 		ctx->tl_pts_ms = 0;
 		ctx->tl_remainder = 0;
+		ctx->base_ts_valid = 0;
+		ctx->base_ts_ms = 0;
+		ctx->last_segment_pts_ms = 0;
+		ctx->have_segment_pts = 0;
+		ctx->init_segment_written = 0;
 		break;
 	case CMD_FMP4_FILE_CLOSE:
+		// Finalize current segment (best-effort) before closing (segmented mode only).
+		if (ctx->fmp4 && ctx->segment_ms > 0 && ctx->init_segment_written) {
+			(void)fmp4_writer_save_segment(ctx->fmp4);
+		}
+		if (ctx->wfp) {
+			(void)fflush(ctx->wfp);
+		}
 		if (ctx->fmp4) {
 			fmp4_writer_destroy(ctx->fmp4);
 			ctx->fmp4 = NULL;
@@ -223,6 +309,8 @@ int fmp4_control(void *p, int cmd, int arg)
 		}
 		ctx->add_audio_track_done = 0;
 		ctx->add_video_track_done = 0;
+		ctx->have_segment_pts = 0;
+		ctx->init_segment_written = 0;
 		break;
 	case CMD_FMP4_APPLY:
 
@@ -236,13 +324,32 @@ int fmp4_control(void *p, int cmd, int arg)
 			ctx->timelapse_record_fps = 0;
 			ctx->tl_pts_ms = 0;
 			ctx->tl_remainder = 0;
+			ctx->base_ts_valid = 0;
+			ctx->base_ts_ms = 0;
 		} else {
 			ctx->timelapse_ts_enable = 1;
 			ctx->timelapse_record_fps = (uint32_t)arg;
 			ctx->tl_pts_ms = 0;
 			ctx->tl_remainder = 0;
+			ctx->base_ts_valid = 0;
+			ctx->base_ts_ms = 0;
 		}
 		break;
+	case CMD_FMP4_SET_SEGMENT_MS: {
+		// 0 disables segmentation; otherwise clamp to a reasonable range.
+		if (arg <= 0) {
+			ctx->segment_ms = 0;
+		} else {
+			uint32_t seg = (uint32_t)arg;
+			if (seg < 200) {
+				seg = 200;
+			} else if (seg > 60000) {
+				seg = 60000;
+			}
+			ctx->segment_ms = seg;
+		}
+		break;
+	}
 	default:
 		break;
 	}
@@ -288,6 +395,12 @@ void *fmp4_create(void *parent)
 	ctx->timelapse_record_fps = 0;
 	ctx->tl_pts_ms = 0;
 	ctx->tl_remainder = 0;
+	ctx->base_ts_valid = 0;
+	ctx->base_ts_ms = 0;
+	ctx->segment_ms = 0;
+	ctx->last_segment_pts_ms = 0;
+	ctx->have_segment_pts = 0;
+	ctx->init_segment_written = 0;
 
 	ctx->s_buffer_len = BUFFER_SIZE_BY_BITRATE(4);
 	ctx->s_buffer = (uint8_t *)malloc(sizeof(uint8_t) * BUFFER_SIZE_BY_BITRATE(4));

@@ -25,6 +25,9 @@
 // If arg is >0, enable timelapse timestamp mode and set "record fps" (synthetic PTS/DTS cadence).
 // If arg is 0, disable timelapse timestamp mode and pass through input timestamps.
 #define CMD_FMP4_SET_TIMELAPSE_FPS      MM_MODULE_CMD(0x07)
+// Set segmented-recording interval in milliseconds.
+// arg == 0 disables segmentation (legacy/non-segmented behavior).
+#define CMD_FMP4_SET_SEGMENT_MS         MM_MODULE_CMD(0x08)
 
 
 struct mov_h264_test_t {
@@ -70,6 +73,16 @@ typedef struct fmp4_ctx_s {
 	uint32_t timelapse_record_fps; // frames per second for synthetic timestamps
 	uint32_t tl_pts_ms;            // current synthetic PTS/DTS in ms
 	uint32_t tl_remainder;         // Bresenham-style remainder accumulator (for 1000/fps rounding)
+
+	// Normalize incoming timestamps to start at 0 for each recording session.
+	bool base_ts_valid;
+	uint32_t base_ts_ms;
+
+	// Progressive recording: periodically finalize a fragment and flush to storage.
+	uint32_t segment_ms;           // 0 = disabled
+	uint32_t last_segment_pts_ms;  // last PTS used to trigger save_segment
+	bool have_segment_pts;
+	bool init_segment_written;     // for segmented mode: init segment written to file
 } fmp4_ctx_t;
 
 extern mm_module_t fmp4_module;
